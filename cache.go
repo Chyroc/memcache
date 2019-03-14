@@ -30,21 +30,30 @@ func New() Cache {
 	}
 }
 
-func (r *cacheImpl) GetBytes(key string) []byte {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
+func (r *cacheImpl) getBytesNoLock(key string) (*time.Time, []byte, bool) {
 	val, ok := r.vals[key]
 	if !ok {
-		return nil
+		return nil, nil, false
 	}
 	ttl, ok := r.ttls[key]
 	if !ok {
-		return nil
+		return nil, nil, false
 	}
 	if ttl.Before(time.Now()) {
 		delete(r.ttls, key)
 		delete(r.vals, key)
+		return nil, nil, false
+	}
+
+	return &ttl, val, true
+}
+
+func (r *cacheImpl) GetBytes(key string) []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, val, ok := r.getBytesNoLock(key)
+	if !ok {
 		return nil
 	}
 
@@ -92,34 +101,20 @@ func (r *cacheImpl) TTL(key string) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.vals[key]; !ok {
-		return -time.Second
-	}
-
-	ttl2, ok := r.ttls[key]
+	ttl, _, ok := r.getBytesNoLock(key)
 	if !ok {
 		return -time.Second
 	}
 
-	now := time.Now()
-	if ttl2.Before(now) {
-		delete(r.ttls, key)
-		delete(r.vals, key)
-		return -time.Second
-	}
-
-	return ttl2.Sub(now)
+	return ttl.Sub(time.Now())
 }
 
 func (r *cacheImpl) Expire(key string, ttl time.Duration) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if _, ok := r.vals[key]; !ok {
-		return false
-	}
-
-	if _, ok := r.ttls[key]; !ok {
+	_, _, ok := r.getBytesNoLock(key)
+	if !ok {
 		return false
 	}
 
